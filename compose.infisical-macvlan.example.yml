@@ -1,0 +1,28 @@
+services:
+  unifi-technitium-dns-sync:
+    build: .
+    image: unifi-technitium-dns-sync:local
+    container_name: unifi-technitium-dns-sync
+    hostname: unifi-technitium-dns-sync
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      INFISICAL_ENABLED: "true"
+    volumes:
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      dns_sync_network:
+        ipv4_address: ${CONTAINER_IPV4}
+
+networks:
+  dns_sync_network:
+    external: true
+    name: ${DOCKER_NETWORK_NAME}

@@ -1,0 +1,17 @@
+services:
+  unifi-technitium-dns-sync:
+    build: .
+    image: unifi-technitium-dns-sync:local
+    container_name: unifi-technitium-dns-sync
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
