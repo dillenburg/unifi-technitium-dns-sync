@@ -1,0 +1,19 @@
+# Runtime secrets and operational data
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.pem
+*.key
+*backup*
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.git/

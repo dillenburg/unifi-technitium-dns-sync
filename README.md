@@ -73,7 +73,8 @@ Recovery runs after Primary discovery and before each normal sync cycle. See
 - Persistent storage for `/data/state.db`
 
 The Technitium account should only have View/Modify/Delete permissions on the
-two zones managed by this service.
+zones managed by this service (all relevant forward and /24 reverse zones
+when multiple scopes are configured).
 
 ## Quick start with Docker Compose
 
@@ -88,7 +89,8 @@ Edit `.env` and keep:
 DRY_RUN=true
 ```
 
-Then build and start:
+Create `data/` with write permissions for UID/GID `10001:10001` (see
+[deployment](docs/qnap-portainer.md)), then build and start:
 
 ```bash
 docker compose up --build -d
@@ -110,7 +112,7 @@ It must not show `DNS_TX_RESERVED`, `DNS_RECORD_ADD`, or
 ## Enabling live writes
 
 1. Complete at least one clean dry-run cycle.
-2. Remove all external or manually created conflicts in the managed names.
+2. Investigate conflicts and agree ownership/names; do not blindly delete external records.
 3. Back up the forward zone, reverse zone, and SQLite state.
 4. Confirm that the tokens cannot modify unrelated zones.
 5. Set `DRY_RUN=false`.
@@ -144,8 +146,22 @@ There are no private network or DNS defaults in the source.
 | `TECHNITIUM_DNS02_HOST` | Second cluster bootstrap node |
 | `DNS01_TOKEN` | Token valid on the first node |
 | `DNS02_TOKEN` | Token valid on the second node |
-| `SYNC_SUBNET` | Managed IPv4 subnet in CIDR notation |
-| `DNS_SUFFIX` | Existing forward zone and generated client suffix |
+| `SYNC_SUBNET` | Managed IPv4 subnet; required unless `SYNC_SCOPES_JSON` is set |
+| `DNS_SUFFIX` | Existing forward zone and generated client suffix; may instead be provided per scope |
+
+### Multiple networks
+
+`SYNC_SCOPES_JSON` overrides the single-subnet configuration:
+
+```json
+[{"name":"lab","subnet":"192.0.2.0/24","dns_suffix":"clients.example.com"},{"name":"iot","subnet":"198.51.100.0/24","dns_suffix":"clients.example.com"}]
+```
+
+Scopes must not overlap. Desired names must be unique across a shared suffix.
+UniFi clients are fetched once per cycle, then processed by scope. The current
+reverse-zone derivation assumes /24 reverse zones, even for differently sized
+configured subnets; provision each required zone. RFC 2317 layouts and IPv6 are
+not supported. See [architecture and limitations](docs/architecture.md).
 
 ### Optional values
 
@@ -168,7 +184,9 @@ Boolean variables accept only `true` or `false`.
 
 ### TLS and plaintext HTTP
 
-TLS verification is enabled by default for both systems. If your internal PKI
+TLS verification is enabled by default for both systems. Set `TECHNITIUM_PORT`
+to the actual configured HTTPS API listener; the default port does not itself
+enable HTTPS on the server. If your internal PKI
 uses a private CA, mount the CA bundle into the container and configure Python's
 standard certificate environment variables rather than disabling verification.
 

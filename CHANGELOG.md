@@ -9,6 +9,14 @@ Semantic Versioning after the first stable release.
 
 ### Added
 
+- Restore the complete runtime package from the local multi-scope implementation.
+- Add direct/Infisical entrypoint, sanitized environment template and ignore rules.
+- Add architecture, recovery, security and QNAP/Portainer documentation.
+- Add offline regression tests and CI test/package/container build checks.
+- Validate boolean settings and DNS suffixes; remove private infrastructure defaults.
+- Enable verified HTTPS defaults and suppress raw API response bodies in errors.
+
+
 - Public repository documentation and hardened container example.
 - Generic environment-only network configuration.
 - HTTPS and certificate verification defaults.
