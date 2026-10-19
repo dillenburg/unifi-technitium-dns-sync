@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import importlib.util
 import json
 import os
@@ -65,6 +66,67 @@ class SyncTests(unittest.TestCase):
     def run_tx(self, tx):
         with patch.object(self.s, 'read_record_values', side_effect=self.read), patch.object(self.s, 'technitium_post', side_effect=self.post):
             self.s.process_pair_transaction(self.primary, tx)
+
+    def cycle_with_fake_dns(self, clients):
+        # Keep real parsing, observations, journal, retirement and scope iteration.
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(self.s, 'get_connected_clients', return_value=clients))
+            stack.enter_context(patch.object(self.s, 'get_dns_records', return_value=[]))
+            stack.enter_context(patch.object(self.s, 'find_a_record', side_effect=lambda records, name: self.records.get(('A', name), [])[:]))
+            stack.enter_context(patch.object(self.s, 'find_ptr_record', side_effect=lambda records, name: self.records.get(('PTR', name), [])[:]))
+            stack.enter_context(patch.object(self.s, 'read_record_values', side_effect=self.read))
+            stack.enter_context(patch.object(self.s, 'technitium_post', side_effect=self.post))
+            events = stack.enter_context(patch.object(self.s, 'event'))
+            self.s.sync_cycle('test', self.primary, True)
+        self.assertFalse(self.s.db.in_transaction)
+        self.assertEqual(sum(call.args[0] == 'SYNC_COMPLETE' for call in events.call_args_list), 1)
+        return events
+
+    def test_full_cycle_no_change_then_add_and_later_scope(self):
+        self.run_tx(self.reserve())
+        os.environ['SYNC_SCOPES_JSON'] = json.dumps([
+            dict(name='one', subnet='192.0.2.0/24'),
+            dict(name='two', subnet='198.51.100.0/24')])
+        self.s.SYNC_SCOPES = self.s.parse_sync_scopes()
+        clients = [dict(mac=self.client['mac'], hostname='laptop', ip=self.client['ip']),
+                   dict(mac='02:00:00:00:00:02', hostname='new', ip='192.0.2.20'),
+                   dict(mac='02:00:00:00:00:03', hostname='later', ip='198.51.100.20')]
+        events = self.cycle_with_fake_dns(clients)
+        self.assertEqual(sum(c.args[0] == 'SCOPE_DNS_COMPLETE' for c in events.call_args_list), 2)
+        self.assertEqual(self.s.db.execute("SELECT COUNT(*) FROM dns_pair_transactions WHERE state='COMPLETE'").fetchone()[0], 3)
+        self.assertEqual(len(self.calls), 6)
+        # A repeat cycle must finish without new DNS writes.
+        self.cycle_with_fake_dns(clients)
+        self.assertEqual(len(self.calls), 6)
+
+    def test_full_cycle_no_change_then_update_and_retirement(self):
+        self.run_tx(self.reserve())
+        first = self.client.copy()
+        self.client = dict(mac='02:00:00:00:00:02', fqdn='moving.clients.example.com', ip='192.0.2.20')
+        self.run_tx(self.reserve())
+        clients = [dict(mac=first['mac'], hostname='laptop', ip=first['ip']),
+                   dict(mac=self.client['mac'], hostname='moving', ip='192.0.2.21')]
+        self.cycle_with_fake_dns(clients)
+        self.assertEqual(self.records[('A', self.client['fqdn'])], ['192.0.2.21'])
+        self.assertEqual(self.records[('PTR', self.s.ptr_name_for_ip('192.0.2.21'))], [self.client['fqdn']])
+        self.assertEqual(self.records[('PTR', self.s.ptr_name_for_ip('192.0.2.20'))], [])
+        self.assertIsNone(self.s.get_owned_record('PTR', self.s.ptr_name_for_ip('192.0.2.20')))
+
+    def test_no_change_observation_failure_rolls_back_and_retry_succeeds(self):
+        self.run_tx(self.reserve())
+        self.s.db.execute("UPDATE dns_records_owned SET last_seen='original'")
+        self.s.db.commit()
+        self.s.db.execute("""CREATE TEMP TRIGGER fail_ptr_touch BEFORE UPDATE OF last_seen
+            ON dns_records_owned WHEN NEW.record_type='PTR'
+            BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END""")
+        clients = [dict(mac=self.client['mac'], hostname='laptop', ip=self.client['ip'])]
+        with self.assertRaisesRegex(self.s.sqlite3.IntegrityError, 'injected observation failure'):
+            self.cycle_with_fake_dns(clients)
+        self.assertFalse(self.s.db.in_transaction)
+        self.assertEqual(self.s.db.execute('SELECT DISTINCT last_seen FROM dns_records_owned').fetchall(), [('original',)])
+        self.s.db.execute('DROP TRIGGER fail_ptr_touch')
+        self.cycle_with_fake_dns(clients)
+        self.assertEqual(len(self.calls), 2)
 
     def test_defaults_and_dry_run_blocks_writes_and_reservations(self):
         self.assertTrue(self.s.DRY_RUN)
