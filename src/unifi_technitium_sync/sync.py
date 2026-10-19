@@ -2950,17 +2950,20 @@ def evaluate_client_pair(
 
     if actions == {"NO_CHANGE"}:
 
-        touch_owned_record(
-            "A",
-            a["name"],
-            mac,
-        )
+        # Finish both observation updates before another client (or retirement)
+        # starts an explicit journal transaction. Roll back both on failure.
+        with db:
+            touch_owned_record(
+                "A",
+                a["name"],
+                mac,
+            )
 
-        touch_owned_record(
-            "PTR",
-            ptr["name"],
-            mac,
-        )
+            touch_owned_record(
+                "PTR",
+                ptr["name"],
+                mac,
+            )
 
         event(
             "DNS_PAIR_NO_CHANGE",
